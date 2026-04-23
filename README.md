@@ -39,7 +39,7 @@ npm run build
 
 ## Deploy en Vercel
 
-El frontend se publica como salida estática de Vite y la API Express se expone como Vercel Function mediante `api/[...path].ts`.
+El frontend se publica como salida estática de Vite y la API Express se expone como Vercel Function mediante `api/server.ts`.
 
 1. Importa el repositorio en Vercel.
 2. Usa `npm run build` como build command y `dist` como output directory.
