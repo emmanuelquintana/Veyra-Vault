@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Vault {
+  id                 String   @id @default(uuid()) @db.Uuid
+  version            Int      @default(1)
+  salt               String   @db.Text
+  iv                 String   @db.Text
+  ciphertext         String   @db.Text
+  iterations         Int
+  themeMode          String   @default("dark") @map("theme_mode") @db.VarChar(16)
+  accentId           String   @default("forest") @map("accent_id") @db.VarChar(32)
+  backgroundId       String   @default("grid") @map("background_id") @db.VarChar(32)
+  recoveryEmail      String?  @map("recovery_email") @db.VarChar(320)
+  recoveryHint       String?  @map("recovery_hint") @db.VarChar(180)
+  recoverySalt       String?  @map("recovery_salt") @db.Text
+  recoveryIv         String?  @map("recovery_iv") @db.Text
+  recoveryCiphertext String?  @map("recovery_ciphertext") @db.Text
+  accountId          String?  @map("account_id") @db.Uuid
+  account            Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt], map: "vaults_updated_at_idx")
+  @@index([accountId], map: "vaults_account_id_idx")
+  @@map("vaults")
+}
+
+model Account {
+  id          String   @id @default(uuid()) @db.Uuid
+  username    String   @unique @db.VarChar(80)
+  email       String   @unique @db.VarChar(320)
+  displayName String?  @map("display_name") @db.VarChar(120)
+  avatarUrl   String?  @map("avatar_url") @db.Text
+  vaults      Vault[]
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("accounts")
+}
