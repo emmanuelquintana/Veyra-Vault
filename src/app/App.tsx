@@ -1785,6 +1785,7 @@ type VaultRailProps = {
   account: AccountDto | null;
   onActiveScreenChange: (screen: ActiveScreen) => void;
   onImport: () => void;
+  onImportEdge: () => void;
   onLock: () => void;
   onNewEntry: () => void;
 };
@@ -1794,6 +1795,7 @@ function VaultRail({
   account,
   onActiveScreenChange,
   onImport,
+  onImportEdge,
   onLock,
   onNewEntry,
 }: VaultRailProps) {
@@ -1826,6 +1828,10 @@ function VaultRail({
         <button className="rail-button" type="button" title="Importar" onClick={onImport}>
           <UploadSimple size={20} />
           <span>Importar</span>
+        </button>
+        <button className="rail-button" type="button" title="Importar CSV Edge" onClick={onImportEdge}>
+          <UploadSimple size={20} weight="duotone" />
+          <span>CSV Edge</span>
         </button>
         <button
           className={`rail-button ${activeScreen === 'export' ? 'is-active' : ''}`}
@@ -1978,6 +1984,7 @@ function VaultScreen({
           account={account}
           onActiveScreenChange={onActiveScreenChange}
           onImport={onImport}
+          onImportEdge={onImportEdge}
           onLock={onLock}
           onNewEntry={onNewEntry}
         />
