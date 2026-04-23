@@ -628,6 +628,11 @@ button:disabled {
   padding: 0.65rem;
 }
 
+.nav-rail.is-settings {
+  min-height: auto;
+  align-self: start;
+}
+
 .rail-brand,
 .rail-button,
 .profile-button {
@@ -692,6 +697,10 @@ button:disabled {
   padding: 0.45rem 0.25rem;
   font-size: 0.68rem;
   font-weight: 800;
+}
+
+.nav-rail.is-settings .profile-button {
+  margin-top: 0.5rem;
 }
 
 .profile-avatar {

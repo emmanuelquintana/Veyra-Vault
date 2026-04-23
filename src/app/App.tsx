@@ -1481,9 +1481,10 @@ function VaultRail({
   onNewEntry,
 }: VaultRailProps) {
   const profileName = account?.displayName || account?.username || 'Perfil';
+  const isSettingsMode = activeScreen === 'settings';
 
   return (
-    <aside className="nav-rail surface-panel" aria-label="Menú lateral">
+    <aside className={`nav-rail surface-panel ${isSettingsMode ? 'is-settings' : ''}`} aria-label="Menú lateral">
       <button className="rail-brand" type="button" title="Bóveda" onClick={() => onActiveScreenChange('vault')}>
         <span className="brand-mark">
           <Vault size={20} weight="duotone" />
