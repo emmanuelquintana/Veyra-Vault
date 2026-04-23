@@ -1537,6 +1537,79 @@ function VaultRail({
   );
 }
 
+type VaultFooterProps = {
+  activeScreen: ActiveScreen;
+  entriesCount: number;
+  account: AccountDto | null;
+  recoveryEnabled: boolean;
+  onActiveScreenChange: (screen: ActiveScreen) => void;
+};
+
+function VaultFooter({
+  activeScreen,
+  entriesCount,
+  account,
+  recoveryEnabled,
+  onActiveScreenChange,
+}: VaultFooterProps) {
+  const profileLabel = account?.displayName || account?.username || 'Perfil local';
+  const footerLinks: Array<{ screen: ActiveScreen; label: string; icon: ReactNode }> = [
+    { screen: 'vault', label: 'Bóveda', icon: <Vault size={16} weight="duotone" /> },
+    { screen: 'export', label: 'Exportar', icon: <DownloadSimple size={16} weight="duotone" /> },
+    { screen: 'settings', label: 'Ajustes', icon: <GearSix size={16} weight="duotone" /> },
+  ];
+
+  return (
+    <footer className="vault-footer surface-panel" aria-label="Información de Veyra Vault">
+      <div className="footer-brand">
+        <span className="brand-mark footer-brand-mark">
+          <Vault size={18} weight="duotone" />
+        </span>
+        <div className="min-w-0">
+          <p className="section-label">{brand.product}</p>
+          <p className="footer-copy">
+            Cifrado en el navegador. La contraseña maestra nunca se envía al servidor.
+          </p>
+        </div>
+      </div>
+
+      <div className="footer-status" aria-label="Estado de bóveda">
+        <span>
+          <strong>{entriesCount}</strong>
+          <small>claves</small>
+        </span>
+        <span>
+          <strong>AES-GCM 256</strong>
+          <small>cifrado</small>
+        </span>
+        <span>
+          <strong>{recoveryEnabled ? 'Activa' : 'Opcional'}</strong>
+          <small>recuperación</small>
+        </span>
+        <span>
+          <strong>{profileLabel}</strong>
+          <small>perfil</small>
+        </span>
+      </div>
+
+      <nav className="footer-nav" aria-label="Navegación secundaria">
+        {footerLinks.map((link) => (
+          <button
+            key={link.screen}
+            className={`footer-nav-button ${activeScreen === link.screen ? 'is-active' : ''}`}
+            type="button"
+            aria-current={activeScreen === link.screen ? 'page' : undefined}
+            onClick={() => onActiveScreenChange(link.screen)}
+          >
+            {link.icon}
+            <span>{link.label}</span>
+          </button>
+        ))}
+      </nav>
+    </footer>
+  );
+}
+
 function VaultScreen({
   entries,
   filteredEntries,
@@ -1815,6 +1888,13 @@ function VaultScreen({
             onGenerateRecovery={onGenerateRecovery}
           />
         )}
+        <VaultFooter
+          activeScreen={activeScreen}
+          entriesCount={entries.length}
+          account={account}
+          recoveryEnabled={recovery.recoveryEnabled}
+          onActiveScreenChange={onActiveScreenChange}
+        />
       </div>
     </main>
   );
