@@ -58,6 +58,12 @@ El frontend se publica como salida estática de Vite y la API Express se expone 
 - El avatar se guarda como Base64 en `accounts.avatar_url`.
 - Los Excel exportados incluyen contraseñas visibles; úsalos como archivos temporales.
 
+## Edge: importar y exportar
+
+- En la pantalla **Exportación** puedes generar un **CSV compatible con Microsoft Edge**.
+- También puedes **importar CSV de Edge** para mezclar credenciales con tu bóveda actual.
+- Para evitar filas inválidas al exportar a Edge, solo se incluyen claves con URL y contraseña.
+
 ## API
 
 Todas las rutas responden con:

@@ -97,6 +97,14 @@ type VaultPayload = {
   entries: VaultEntry[];
 };
 
+type EdgeCsvCredential = {
+  service: string;
+  url: string;
+  username: string;
+  password: string;
+  notes: string;
+};
+
 type DraftEntry = {
   service: string;
   url: string;
@@ -400,6 +408,231 @@ function formatDate(value: string) {
   }
 }
 
+function normalizeCsvHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function parseCsvRows(source: string, delimiter: string) {
+  const rows: string[][] = [];
+  const text = source.replace(/^\uFEFF/, '');
+  let currentRow: string[] = [];
+  let currentCell = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char === '"') {
+      const nextChar = text[index + 1];
+      if (inQuotes && nextChar === '"') {
+        currentCell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === delimiter) {
+      currentRow.push(currentCell);
+      currentCell = '';
+      continue;
+    }
+
+    if (!inQuotes && (char === '\n' || char === '\r')) {
+      if (char === '\r' && text[index + 1] === '\n') {
+        index += 1;
+      }
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+      currentRow = [];
+      currentCell = '';
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (currentCell.length || currentRow.length) {
+    currentRow.push(currentCell);
+    rows.push(currentRow);
+  }
+
+  return rows.filter((row) => row.some((cell) => cell.trim().length));
+}
+
+function findCsvColumnIndex(headers: string[], aliases: string[]) {
+  const normalizedAliases = new Set(aliases.map(normalizeCsvHeader));
+  return headers.findIndex((header) => normalizedAliases.has(normalizeCsvHeader(header)));
+}
+
+function normalizeUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function serviceFromUrl(url: string) {
+  if (!url) return '';
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '');
+  } catch {
+    return '';
+  }
+}
+
+function getCsvCell(row: string[], index: number) {
+  return index < 0 ? '' : (row[index] ?? '').trim();
+}
+
+function parseEdgeCsvCredentials(source: string) {
+  let rows = parseCsvRows(source, ',');
+  if (rows.length && rows[0].length <= 1 && source.includes(';')) {
+    rows = parseCsvRows(source, ';');
+  }
+
+  if (!rows.length) {
+    throw new Error('El CSV está vacío.');
+  }
+
+  const headers = rows[0];
+  const serviceIndex = findCsvColumnIndex(headers, ['name', 'nombre', 'title', 'sitio']);
+  const urlIndex = findCsvColumnIndex(headers, ['url', 'website', 'sitio web', 'origin', 'login url', 'site']);
+  const usernameIndex = findCsvColumnIndex(headers, [
+    'username',
+    'nombre de usuario',
+    'user',
+    'email',
+    'correo',
+  ]);
+  const passwordIndex = findCsvColumnIndex(headers, ['password', 'contraseña', 'contrasena', 'clave']);
+  const notesIndex = findCsvColumnIndex(headers, ['note', 'notes', 'nota', 'notas']);
+
+  if (passwordIndex < 0) {
+    throw new Error('No encontré la columna de contraseña en el CSV de Edge.');
+  }
+
+  const credentials: EdgeCsvCredential[] = [];
+  rows.slice(1).forEach((row) => {
+    const password = getCsvCell(row, passwordIndex);
+    if (!password) return;
+
+    const url = normalizeUrl(getCsvCell(row, urlIndex));
+    const username = getCsvCell(row, usernameIndex);
+    const service =
+      getCsvCell(row, serviceIndex) ||
+      serviceFromUrl(url) ||
+      username ||
+      'Acceso importado';
+    const notes = getCsvCell(row, notesIndex);
+
+    if (!service && !url && !username) return;
+    credentials.push({ service, url, username, password, notes });
+  });
+
+  return credentials;
+}
+
+function mergeEdgeNotes(currentNotes: string, edgeNotes: string) {
+  const normalizedCurrent = currentNotes.trim();
+  const normalizedEdge = edgeNotes.trim();
+  if (!normalizedEdge) return currentNotes;
+  if (!normalizedCurrent) return normalizedEdge;
+  if (normalizedCurrent.includes(normalizedEdge)) return currentNotes;
+  return `${currentNotes}\n\n[Edge] ${normalizedEdge}`;
+}
+
+function entryFingerprint(service: string, url: string, username: string) {
+  const normalizedUrl = url.trim().toLowerCase();
+  const normalizedUsername = username.trim().toLowerCase();
+  if (normalizedUrl || normalizedUsername) {
+    return `${normalizedUrl}|${normalizedUsername}`;
+  }
+  return service.trim().toLowerCase();
+}
+
+function mergeEdgeCredentials(existingEntries: VaultEntry[], importedCredentials: EdgeCsvCredential[]) {
+  const nextEntries = [...existingEntries];
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+
+  importedCredentials.forEach((credential) => {
+    const targetFingerprint = entryFingerprint(credential.service, credential.url, credential.username);
+    const existingIndex = nextEntries.findIndex(
+      (entry) => entryFingerprint(entry.service, entry.url, entry.username) === targetFingerprint,
+    );
+
+    if (existingIndex >= 0) {
+      const current = nextEntries[existingIndex];
+      const nextNotes = mergeEdgeNotes(current.notes, credential.notes);
+      const nextTags = current.tags.includes('Edge') ? current.tags : [...current.tags, 'Edge'];
+      const candidate: VaultEntry = {
+        ...current,
+        service: credential.service || current.service,
+        url: credential.url || current.url,
+        username: credential.username || current.username,
+        password: credential.password || current.password,
+        notes: nextNotes,
+        tags: nextTags,
+      };
+      const changed =
+        candidate.service !== current.service ||
+        candidate.url !== current.url ||
+        candidate.username !== current.username ||
+        candidate.password !== current.password ||
+        candidate.notes !== current.notes ||
+        candidate.tags.length !== current.tags.length;
+
+      if (!changed) {
+        unchanged += 1;
+        return;
+      }
+
+      nextEntries[existingIndex] = { ...candidate, updatedAt: new Date().toISOString() };
+      updated += 1;
+      return;
+    }
+
+    const now = new Date().toISOString();
+    nextEntries.unshift({
+      id: makeId(),
+      service: credential.service,
+      url: credential.url,
+      username: credential.username,
+      password: credential.password,
+      notes: credential.notes,
+      category: 'Personal',
+      tags: ['Edge'],
+      createdAt: now,
+      updatedAt: now,
+    });
+    created += 1;
+  });
+
+  return { entries: nextEntries, created, updated, unchanged };
+}
+
+function csvCell(value: string) {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!/[",\n]/.test(normalized)) return normalized;
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
+function buildEdgeCsv(entries: VaultEntry[]) {
+  const headers = ['name', 'url', 'username', 'password'];
+  const lines = [
+    headers.join(','),
+    ...entries.map((entry) => [entry.service, entry.url, entry.username, entry.password].map(csvCell).join(',')),
+  ];
+  return lines.join('\r\n');
+}
+
 function getStoredThemeMode(): ThemeMode {
   const stored = getStoredValue(THEME_MODE_KEY, LEGACY_THEME_MODE_KEY);
   if (stored === 'light' || stored === 'dark') return stored;
@@ -467,6 +700,7 @@ function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const edgeImportInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -966,6 +1200,84 @@ function App() {
     }
   }
 
+  async function handleExportEdgeCsv(selectedEntries: VaultEntry[]) {
+    if (!selectedEntries.length) {
+      showToast('Selecciona al menos una clave para exportar a Edge.', 'error');
+      return;
+    }
+
+    const edgeReadyEntries = selectedEntries.filter((entry) => entry.url.trim() && entry.password.trim());
+    if (!edgeReadyEntries.length) {
+      showToast('Selecciona claves con URL y contraseña para exportar a Edge.', 'error');
+      return;
+    }
+
+    const skipped = selectedEntries.length - edgeReadyEntries.length;
+    const confirmed = await requestConfirm({
+      title: 'Exportar CSV para Edge',
+      message:
+        'El CSV de Edge no va cifrado. Úsalo solo para mover tus claves entre dispositivos y elimínalo cuando termines.',
+      tone: 'danger',
+      confirmLabel: 'Descargar CSV',
+    });
+    if (!confirmed) return;
+
+    try {
+      const csv = buildEdgeCsv(edgeReadyEntries);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${brand.exportSlug}-edge-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showToast(
+        `CSV para Edge exportado con ${edgeReadyEntries.length} claves${skipped ? ` (${skipped} omitidas sin URL)` : ''}.`,
+      );
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+    }
+  }
+
+  async function handleImportEdge(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+
+    if (!file) return;
+
+    try {
+      const importedCredentials = parseEdgeCsvCredentials(await file.text());
+      if (!importedCredentials.length) {
+        throw new Error('No encontré credenciales válidas en el CSV de Edge.');
+      }
+
+      const confirmed = await requestConfirm({
+        title: 'Importar CSV de Edge',
+        message: `Se procesarán ${importedCredentials.length} credenciales y se mezclarán con tu bóveda actual.`,
+        confirmLabel: 'Importar CSV',
+      });
+      if (!confirmed) return;
+
+      setIsBusy(true);
+      try {
+        const merged = mergeEdgeCredentials(entries, importedCredentials);
+        if (!merged.created && !merged.updated) {
+          showToast('El CSV no trae cambios nuevos para tu bóveda.');
+          return;
+        }
+
+        await persistEntries(merged.entries);
+        showToast(
+          `Importación Edge completada: ${merged.created} nuevas, ${merged.updated} actualizadas${merged.unchanged ? `, ${merged.unchanged} sin cambios` : ''}.`,
+        );
+      } finally {
+        setIsBusy(false);
+      }
+    } catch (error) {
+      showToast(getErrorMessage(error), 'error');
+    }
+  }
+
   async function handleImport(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
@@ -1065,8 +1377,10 @@ function App() {
         onToggleReveal={toggleReveal}
         onCopy={handleCopy}
         onExportExcel={handleExportExcel}
+        onExportEdgeCsv={handleExportEdgeCsv}
         onExportEncrypted={handleExportEncryptedVault}
         onImport={() => importInputRef.current?.click()}
+        onImportEdge={() => edgeImportInputRef.current?.click()}
         onLock={handleLock}
         onThemeToggle={handleThemeToggle}
         onAccentChange={handleAccentChange}
@@ -1085,6 +1399,7 @@ function App() {
         />
       )}
       <input ref={importInputRef} className="hidden" type="file" accept="application/json" onChange={handleImport} />
+      <input ref={edgeImportInputRef} className="hidden" type="file" accept=".csv,text/csv" onChange={handleImportEdge} />
       <ConfirmDialog dialog={confirmDialog} onResolve={resolveConfirmDialog} />
       <ToastRack toast={toast} />
     </>
@@ -1451,8 +1766,10 @@ type VaultScreenProps = {
   onToggleReveal: (id: string) => void;
   onCopy: (value: string, id: string) => void;
   onExportExcel: (entries: VaultEntry[]) => Promise<void>;
+  onExportEdgeCsv: (entries: VaultEntry[]) => Promise<void>;
   onExportEncrypted: () => void;
   onImport: () => void;
+  onImportEdge: () => void;
   onLock: () => void;
   onThemeToggle: (event: MouseEvent<HTMLButtonElement>) => void;
   onAccentChange: (accentId: AccentId, event: MouseEvent<HTMLButtonElement>) => void;
@@ -1637,8 +1954,10 @@ function VaultScreen({
   onToggleReveal,
   onCopy,
   onExportExcel,
+  onExportEdgeCsv,
   onExportEncrypted,
   onImport,
+  onImportEdge,
   onLock,
   onThemeToggle,
   onAccentChange,
@@ -1869,8 +2188,11 @@ function VaultScreen({
         ) : activeScreen === 'export' ? (
           <ExportScreen
             entries={entries}
+            isBusy={isBusy}
             onExportEncrypted={onExportEncrypted}
             onExportExcel={onExportExcel}
+            onExportEdgeCsv={onExportEdgeCsv}
+            onImportEdge={onImportEdge}
           />
         ) : (
           <SettingsScreen
@@ -1919,14 +2241,25 @@ type SettingsScreenProps = {
 
 type ExportScreenProps = {
   entries: VaultEntry[];
+  isBusy: boolean;
   onExportEncrypted: () => void;
   onExportExcel: (entries: VaultEntry[]) => Promise<void>;
+  onExportEdgeCsv: (entries: VaultEntry[]) => Promise<void>;
+  onImportEdge: () => void;
 };
 
-function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScreenProps) {
+function ExportScreen({
+  entries,
+  isBusy,
+  onExportEncrypted,
+  onExportExcel,
+  onExportEdgeCsv,
+  onImportEdge,
+}: ExportScreenProps) {
   const [exportQuery, setExportQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(entries.map((entry) => entry.id)));
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExcelExporting, setIsExcelExporting] = useState(false);
+  const [isEdgeExporting, setIsEdgeExporting] = useState(false);
 
   useEffect(() => {
     setSelectedIds(new Set(entries.map((entry) => entry.id)));
@@ -1967,11 +2300,20 @@ function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScree
   }
 
   async function handleExcelExport() {
-    setIsExporting(true);
+    setIsExcelExporting(true);
     try {
       await onExportExcel(selectedEntries);
     } finally {
-      setIsExporting(false);
+      setIsExcelExporting(false);
+    }
+  }
+
+  async function handleEdgeExport() {
+    setIsEdgeExporting(true);
+    try {
+      await onExportEdgeCsv(selectedEntries);
+    } finally {
+      setIsEdgeExporting(false);
     }
   }
 
@@ -1981,9 +2323,10 @@ function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScree
         <div className="settings-header">
           <div>
             <p className="section-label">Exportación</p>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950">Selecciona claves para Excel</h1>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950">Mover claves entre dispositivos</h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
-              El archivo Excel sale descifrado para que puedas abrirlo en hojas de cálculo. Exporta solo lo necesario.
+              Puedes exportar a Excel, generar CSV compatible con Edge o importar un CSV de Edge para seguir trabajando desde
+              otro equipo.
             </p>
           </div>
           <span className="status-orbit">
@@ -2010,6 +2353,10 @@ function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScree
                 <button className="secondary-button" type="button" onClick={() => setSelectedIds(new Set())}>
                   <X size={17} />
                   <span>Limpiar</span>
+                </button>
+                <button className="secondary-button" type="button" disabled={isBusy} onClick={onImportEdge}>
+                  <UploadSimple size={17} />
+                  <span>Importar CSV Edge</span>
                 </button>
               </div>
             </div>
@@ -2059,11 +2406,20 @@ function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScree
               <button
                 className="primary-button justify-center"
                 type="button"
-                disabled={!selectedEntries.length || isExporting}
+                disabled={!selectedEntries.length || isExcelExporting || isBusy}
                 onClick={handleExcelExport}
               >
                 <DownloadSimple size={18} weight="duotone" />
-                <span>{isExporting ? 'Exportando' : 'Descargar Excel'}</span>
+                <span>{isExcelExporting ? 'Exportando' : 'Descargar Excel'}</span>
+              </button>
+              <button
+                className="secondary-button justify-center"
+                type="button"
+                disabled={!selectedEntries.length || isEdgeExporting || isBusy}
+                onClick={handleEdgeExport}
+              >
+                <DownloadSimple size={18} weight="duotone" />
+                <span>{isEdgeExporting ? 'Preparando CSV' : 'Exportar CSV Edge'}</span>
               </button>
               <button className="secondary-button justify-center" type="button" onClick={onExportEncrypted}>
                 <ShieldCheck size={18} weight="duotone" />
@@ -2073,7 +2429,8 @@ function ExportScreen({ entries, onExportEncrypted, onExportExcel }: ExportScree
             <div className="export-warning mt-5">
               <p className="text-sm font-semibold text-zinc-900">Cuidado con el archivo</p>
               <p className="mt-1 text-sm leading-relaxed text-zinc-500">
-                El Excel incluye contraseñas visibles. El respaldo cifrado, en cambio, solo se abre con la contraseña maestra.
+                Excel y CSV Edge incluyen contraseñas visibles. El respaldo cifrado, en cambio, solo se abre con la contraseña
+                maestra.
               </p>
             </div>
           </aside>
