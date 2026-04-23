@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Veyra</title>
+  <rect width="64" height="64" rx="14" fill="#064e3b"/>
+  <path d="M18 18h28v18c0 9.5-5.4 16.2-14 19.5C23.4 52.2 18 45.5 18 36V18Z" fill="#f5f7f4" opacity=".94"/>
+  <path d="M25 27h14a5 5 0 0 1 0 10H25V27Zm4 4v2h9.5a1 1 0 1 0 0-2H29Z" fill="#064e3b"/>
+  <path d="M41 31h5v2h-5zM44 33h2v4h-2z" fill="#064e3b"/>
+  <path d="M22 18h20" stroke="#a7f3d0" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+</svg>

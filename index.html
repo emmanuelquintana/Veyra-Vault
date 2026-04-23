@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7f4" />
+    <meta
+      name="description"
+      content="Veyra es una bóveda de contraseñas cifrada con sincronización en Supabase."
+    />
+    <link rel="icon" type="image/svg+xml" href="/src/assets/favicon.svg" />
+    <title>Veyra Vault</title>
+    <script>
+      (() => {
+        const currentPrefix = "veyra";
+        const legacyPrefix = "llave-clara";
+        const getStored = (name) =>
+          localStorage.getItem(`${currentPrefix}.${name}.v1`) ??
+          localStorage.getItem(`${legacyPrefix}.${name}.v1`);
+        const storedMode = getStored("theme-mode");
+        const mode =
+          storedMode === "light" || storedMode === "dark"
+            ? storedMode
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        const accent = getStored("accent") || "forest";
+        const background = getStored("background") || "grid";
+
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.dataset.accent = accent;
+        document.documentElement.dataset.background = background;
+        document.documentElement.classList.toggle("dark", mode === "dark");
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
