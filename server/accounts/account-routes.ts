@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { PaginationMetadata } from '../core/pagination-metadata.js';
 import { ApiResponseBuilder } from '../core/api-response-builder.js';
 import { sendError, sendSuccess } from '../core/http.js';
@@ -114,13 +115,39 @@ accountRouter.post('/', async (req, res) => {
     return sendError(res, 400, 'TG_CORE_400', 'Invalid account payload.');
   }
 
+  const accountData = toAccountData(payload);
+
   try {
+    const existingByEmail = await prisma.account.findUnique({
+      where: {
+        email: accountData.email,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingByEmail) {
+      const account = await prisma.account.update({
+        where: {
+          id: existingByEmail.id,
+        },
+        data: accountData,
+      });
+
+      return sendSuccess(res, toAccountDto(account), 'Account synced.');
+    }
+
     const account = await prisma.account.create({
-      data: toAccountData(payload),
+      data: accountData,
     });
 
     return sendSuccess(res, toAccountDto(account), 'Account created.', 201);
   } catch (error) {
+    const conflictMessage = getAccountConflictMessage(error);
+    if (conflictMessage) {
+      return sendError(res, 409, 'TG_CORE_409', conflictMessage);
+    }
     return sendError(res, 500, 'TG_CORE_500', getDatabaseErrorMessage(error));
   }
 });
@@ -163,6 +190,15 @@ accountRouter.put('/:accountId', async (req, res) => {
 
     return sendSuccess(res, toAccountDto(account), 'Account updated.');
   } catch (error) {
+    if (isPrismaNotFound(error)) {
+      return sendError(res, 404, 'TG_CORE_404', 'Account not found.');
+    }
+
+    const conflictMessage = getAccountConflictMessage(error);
+    if (conflictMessage) {
+      return sendError(res, 409, 'TG_CORE_409', conflictMessage);
+    }
+
     return sendError(res, 500, 'TG_CORE_500', getDatabaseErrorMessage(error));
   }
 });
@@ -179,9 +215,42 @@ accountRouter.delete('/:accountId', async (req, res) => {
 
     return sendSuccess(res, toAccountDto(account), 'Account deleted.');
   } catch (error) {
+    if (isPrismaNotFound(error)) {
+      return sendError(res, 404, 'TG_CORE_404', 'Account not found.');
+    }
+
     return sendError(res, 500, 'TG_CORE_500', getDatabaseErrorMessage(error));
   }
 });
+
+function isPrismaNotFound(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
+}
+
+function getAccountConflictMessage(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+    return null;
+  }
+
+  const target = error.meta?.target;
+  const fields = (Array.isArray(target) ? target : typeof target === 'string' ? [target] : []).map((field) =>
+    field.toLowerCase(),
+  );
+
+  if (fields.some((field) => field.includes('email')) && fields.some((field) => field.includes('username'))) {
+    return 'El correo y el usuario ya están registrados.';
+  }
+
+  if (fields.some((field) => field.includes('email'))) {
+    return 'Ese correo ya está registrado en otra cuenta.';
+  }
+
+  if (fields.some((field) => field.includes('username'))) {
+    return 'Ese nombre de usuario ya está registrado.';
+  }
+
+  return 'Ya existe una cuenta con esos datos.';
+}
 
 function getDatabaseErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Database operation failed.';
