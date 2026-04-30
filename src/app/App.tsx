@@ -34,6 +34,7 @@ import {
   createAccount,
   deleteAccount,
   findRecoveryVault,
+  findAccountVault,
   getAccount,
   createRemoteVault,
   getRemoteVault,
@@ -687,6 +688,8 @@ function App() {
   const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState('');
   const [masterPassword, setMasterPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [setupEmail, setSetupEmail] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
   const [authError, setAuthError] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [vaultKey, setVaultKey] = useState<CryptoKey | null>(null);
@@ -902,12 +905,27 @@ function App() {
       const nextVault = await createEmptyVault(masterPassword);
       const remoteVault = await createRemoteVault(nextVault.record, currentSettings());
       applyRemoteVault(remoteVault);
+
+      const email = setupEmail.trim().toLowerCase();
+      if (email) {
+        try {
+          const prefix = email.split('@')[0].replace(/[^a-z0-9_-]/g, '_').slice(0, 68);
+          const suffix = Math.random().toString(36).slice(2, 6);
+          const savedAccount = await createAccount({ username: `${prefix}_${suffix}`, email, displayName: '', avatarUrl: '' });
+          await attachAccountToVault(remoteVault.vaultId, savedAccount.id);
+          setAccount(savedAccount);
+        } catch {
+          // Non-fatal: vault is created; user can link email from Settings later
+        }
+      }
+
       setVaultKey(nextVault.key);
       setEntries([]);
       setMode('unlocked');
       setMasterPassword('');
       setConfirmPassword('');
-      showToast('Bóveda creada en Supabase.');
+      setSetupEmail('');
+      showToast('Bóveda creada.');
     } catch (error) {
       setAuthError(getErrorMessage(error));
     } finally {
@@ -947,6 +965,42 @@ function App() {
     } catch (error) {
       const message = getErrorMessage(error);
       setAuthError(message.includes('Vault') || message.includes('API') ? message : 'La contraseña maestra no abrió la bóveda.');
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleLoginWithEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError('');
+
+    const email = loginEmail.trim();
+    if (!email) {
+      setAuthError('Escribe tu correo electrónico.');
+      return;
+    }
+
+    if (masterPassword.length < 10) {
+      setAuthError('Usa al menos 10 caracteres para la contraseña maestra.');
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const remoteVault = await findAccountVault(email);
+      const key = await deriveMasterKey(masterPassword, base64ToBytes(remoteVault.record.salt), remoteVault.record.iterations);
+      const openedEntries = await openEntries(remoteVault.record, key);
+      applyRemoteVault(remoteVault);
+      setVaultKey(key);
+      setEntries(openedEntries);
+      setMode('unlocked');
+      setMasterPassword('');
+      setLoginEmail('');
+      setSelectedId(openedEntries[0]?.id ?? null);
+      showToast('Bóveda abierta.');
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setAuthError(message.includes('bóveda') || message.includes('API') ? message : 'Correo o contraseña incorrectos.');
     } finally {
       setIsBusy(false);
     }
@@ -1320,6 +1374,8 @@ function App() {
           mode={mode}
           masterPassword={masterPassword}
           confirmPassword={confirmPassword}
+          setupEmail={setupEmail}
+          loginEmail={loginEmail}
           recoveryIdentifier={recoveryIdentifier}
           recoveryCode={recoveryCode}
           recoveryMasterPassword={recoveryMasterPassword}
@@ -1331,12 +1387,15 @@ function App() {
           accentId={accentId}
           onMasterPasswordChange={setMasterPassword}
           onConfirmPasswordChange={setConfirmPassword}
+          onSetupEmailChange={setSetupEmail}
+          onLoginEmailChange={setLoginEmail}
           onRecoveryIdentifierChange={setRecoveryIdentifier}
           onRecoveryCodeChange={setRecoveryCode}
           onRecoveryMasterPasswordChange={setRecoveryMasterPassword}
           onRecoveryConfirmPasswordChange={setRecoveryConfirmPassword}
           onCreateVault={handleCreateVault}
           onUnlock={handleUnlock}
+          onLoginWithEmail={handleLoginWithEmail}
           onRecoverVault={handleRecoverVault}
           onImport={() => importInputRef.current?.click()}
           onThemeToggle={handleThemeToggle}
@@ -1410,6 +1469,8 @@ type AuthScreenProps = {
   mode: AuthMode;
   masterPassword: string;
   confirmPassword: string;
+  setupEmail: string;
+  loginEmail: string;
   recoveryIdentifier: string;
   recoveryCode: string;
   recoveryMasterPassword: string;
@@ -1421,12 +1482,15 @@ type AuthScreenProps = {
   accentId: AccentId;
   onMasterPasswordChange: (value: string) => void;
   onConfirmPasswordChange: (value: string) => void;
+  onSetupEmailChange: (value: string) => void;
+  onLoginEmailChange: (value: string) => void;
   onRecoveryIdentifierChange: (value: string) => void;
   onRecoveryCodeChange: (value: string) => void;
   onRecoveryMasterPasswordChange: (value: string) => void;
   onRecoveryConfirmPasswordChange: (value: string) => void;
   onCreateVault: (event: FormEvent<HTMLFormElement>) => void;
   onUnlock: (event: FormEvent<HTMLFormElement>) => void;
+  onLoginWithEmail: (event: FormEvent<HTMLFormElement>) => void;
   onRecoverVault: (event: FormEvent<HTMLFormElement>) => void;
   onImport: () => void;
   onThemeToggle: (event: MouseEvent<HTMLButtonElement>) => void;
@@ -1437,6 +1501,8 @@ function AuthScreen({
   mode,
   masterPassword,
   confirmPassword,
+  setupEmail,
+  loginEmail,
   recoveryIdentifier,
   recoveryCode,
   recoveryMasterPassword,
@@ -1448,12 +1514,15 @@ function AuthScreen({
   accentId,
   onMasterPasswordChange,
   onConfirmPasswordChange,
+  onSetupEmailChange,
+  onLoginEmailChange,
   onRecoveryIdentifierChange,
   onRecoveryCodeChange,
   onRecoveryMasterPasswordChange,
   onRecoveryConfirmPasswordChange,
   onCreateVault,
   onUnlock,
+  onLoginWithEmail,
   onRecoverVault,
   onImport,
   onThemeToggle,
@@ -1463,6 +1532,7 @@ function AuthScreen({
   const strength = scorePassword(masterPassword);
   const recoveryStrength = scorePassword(recoveryMasterPassword);
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
   return (
     <main className="app-shell relative min-h-[100dvh] overflow-hidden text-zinc-950">
@@ -1511,74 +1581,157 @@ function AuthScreen({
 
         <section className="flex items-center justify-center pb-8 lg:pb-0">
           <div className="auth-panel w-full max-w-[540px]">
-            <form onSubmit={isSetup ? onCreateVault : onUnlock}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-emerald-950">{isSetup ? 'Crear bóveda' : 'Desbloquear'}</p>
-                  <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
-                    {isSetup ? 'Define tu contraseña maestra' : 'Escribe tu contraseña maestra'}
-                  </h2>
+            {isSetup && showLogin ? (
+              <form onSubmit={onLoginWithEmail}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-950">Acceder</p>
+                    <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
+                      Abre tu bóveda desde este dispositivo
+                    </h2>
+                  </div>
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-white text-zinc-700">
+                    <LockKey size={21} weight="duotone" />
+                  </span>
                 </div>
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-white text-zinc-700">
-                  <LockKey size={21} weight="duotone" />
-                </span>
-              </div>
 
-              <div className="mt-8 space-y-5">
-                <FieldBlock label="Contraseña maestra" helper="No se guarda en texto plano.">
-                  <input
-                    className="field-input"
-                    type="password"
-                    autoComplete={isSetup ? 'new-password' : 'current-password'}
-                    value={masterPassword}
-                    onChange={(event) => onMasterPasswordChange(event.target.value)}
-                    placeholder="Mínimo 10 caracteres"
-                    required
-                  />
-                </FieldBlock>
+                <div className="mt-8 space-y-5">
+                  <FieldBlock label="Correo electrónico" helper="El correo que vinculaste a tu bóveda.">
+                    <input
+                      className="field-input"
+                      type="email"
+                      autoComplete="email"
+                      value={loginEmail}
+                      onChange={(event) => onLoginEmailChange(event.target.value)}
+                      placeholder="tu@correo.com"
+                      required
+                    />
+                  </FieldBlock>
+                  <FieldBlock label="Contraseña maestra" helper="No se guarda en texto plano.">
+                    <input
+                      className="field-input"
+                      type="password"
+                      autoComplete="current-password"
+                      value={masterPassword}
+                      onChange={(event) => onMasterPasswordChange(event.target.value)}
+                      placeholder="Mínimo 10 caracteres"
+                      required
+                    />
+                  </FieldBlock>
+
+                  {authError && (
+                    <div className="inline-flex w-full items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      <WarningCircle size={18} weight="duotone" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                  <button className="primary-button flex-1" type="submit" disabled={isBusy}>
+                    <ShieldCheck size={19} weight="duotone" />
+                    <span>{isBusy ? 'Buscando' : 'Abrir bóveda'}</span>
+                  </button>
+                </div>
+
+                <button
+                  className="mt-5 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+                  type="button"
+                  onClick={() => setShowLogin(false)}
+                >
+                  ← Crear bóveda nueva
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={isSetup ? onCreateVault : onUnlock}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-950">{isSetup ? 'Crear bóveda' : 'Desbloquear'}</p>
+                    <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-950">
+                      {isSetup ? 'Define tu contraseña maestra' : 'Escribe tu contraseña maestra'}
+                    </h2>
+                  </div>
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-zinc-200 bg-white text-zinc-700">
+                    <LockKey size={21} weight="duotone" />
+                  </span>
+                </div>
+
+                <div className="mt-8 space-y-5">
+                  <FieldBlock label="Contraseña maestra" helper="No se guarda en texto plano.">
+                    <input
+                      className="field-input"
+                      type="password"
+                      autoComplete={isSetup ? 'new-password' : 'current-password'}
+                      value={masterPassword}
+                      onChange={(event) => onMasterPasswordChange(event.target.value)}
+                      placeholder="Mínimo 10 caracteres"
+                      required
+                    />
+                  </FieldBlock>
+
+                  {isSetup && (
+                    <>
+                      <StrengthMeter score={strength} />
+                      <FieldBlock label="Confirmar contraseña" helper="Debe coincidir exactamente.">
+                        <input
+                          className="field-input"
+                          type="password"
+                          autoComplete="new-password"
+                          value={confirmPassword}
+                          onChange={(event) => onConfirmPasswordChange(event.target.value)}
+                          placeholder="Repite la contraseña maestra"
+                          required
+                        />
+                      </FieldBlock>
+                      <FieldBlock label="Correo electrónico (opcional)" helper="Permite abrir tu bóveda desde cualquier dispositivo.">
+                        <input
+                          className="field-input"
+                          type="email"
+                          autoComplete="email"
+                          value={setupEmail}
+                          onChange={(event) => onSetupEmailChange(event.target.value)}
+                          placeholder="tu@correo.com"
+                        />
+                      </FieldBlock>
+                    </>
+                  )}
+
+                  {authError && (
+                    <div className="inline-flex w-full items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      <WarningCircle size={18} weight="duotone" />
+                      <span>{authError}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                  <button className="primary-button flex-1" type="submit" disabled={isBusy}>
+                    <ShieldCheck size={19} weight="duotone" />
+                    <span>{isBusy ? 'Procesando' : isSetup ? 'Crear bóveda' : 'Abrir bóveda'}</span>
+                  </button>
+                  <button className="secondary-button" type="button" onClick={onImport}>
+                    <UploadSimple size={18} />
+                    <span>Importar</span>
+                  </button>
+                </div>
 
                 {isSetup && (
-                  <>
-                    <StrengthMeter score={strength} />
-                    <FieldBlock label="Confirmar contraseña" helper="Debe coincidir exactamente.">
-                      <input
-                        className="field-input"
-                        type="password"
-                        autoComplete="new-password"
-                        value={confirmPassword}
-                        onChange={(event) => onConfirmPasswordChange(event.target.value)}
-                        placeholder="Repite la contraseña maestra"
-                        required
-                      />
-                    </FieldBlock>
-                  </>
+                  <button
+                    className="mt-5 text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+                    type="button"
+                    onClick={() => setShowLogin(true)}
+                  >
+                    ¿Ya tienes una bóveda? Acceder con correo →
+                  </button>
                 )}
 
-                {authError && (
-                  <div className="inline-flex w-full items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                    <WarningCircle size={18} weight="duotone" />
-                    <span>{authError}</span>
-                  </div>
+                {!isSetup && !hasVault && (
+                  <p className="mt-5 text-sm text-zinc-500">
+                    No hay una bóveda local. Puedes buscarla con tu usuario o correo si activaste recuperación.
+                  </p>
                 )}
-              </div>
-
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <button className="primary-button flex-1" type="submit" disabled={isBusy}>
-                  <ShieldCheck size={19} weight="duotone" />
-                  <span>{isBusy ? 'Procesando' : isSetup ? 'Crear bóveda' : 'Abrir bóveda'}</span>
-                </button>
-                <button className="secondary-button" type="button" onClick={onImport}>
-                  <UploadSimple size={18} />
-                  <span>Importar</span>
-                </button>
-              </div>
-
-              {!isSetup && !hasVault && (
-                <p className="mt-5 text-sm text-zinc-500">
-                  No hay una bóveda local. Puedes buscarla con tu usuario o correo si activaste recuperación.
-                </p>
-              )}
-            </form>
+              </form>
+            )}
 
             {!isSetup && (
               <div className="recovery-entry mt-6">
