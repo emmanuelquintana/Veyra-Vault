@@ -84,6 +84,16 @@ export async function findRecoveryVault(identifier: string) {
   return readApi<VaultDto>(response);
 }
 
+export async function findAccountVault(identifier: string) {
+  const response = await fetch('/api/v1/vaults/account/lookup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier }),
+  });
+
+  return readApi<VaultDto>(response);
+}
+
 export async function updateRemoteVault(vaultId: string, record: VaultRecord) {
   const response = await fetch(`/api/v1/vaults/${vaultId}`, {
     method: 'PUT',

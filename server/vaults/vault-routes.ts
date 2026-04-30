@@ -97,6 +97,42 @@ vaultRouter.post('/recovery/lookup', async (req, res) => {
   }
 });
 
+vaultRouter.post('/account/lookup', async (req, res) => {
+  const identifier = (req.body as Record<string, unknown>).identifier;
+
+  if (typeof identifier !== 'string' || identifier.trim().length < 3 || identifier.trim().length > 320) {
+    return sendError(res, 400, 'TG_CORE_400', 'Identificador inválido.');
+  }
+
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+
+  try {
+    const vault = await prisma.vault.findFirst({
+      where: {
+        account: {
+          is: {
+            OR: [
+              { email: normalizedIdentifier },
+              { username: normalizedIdentifier },
+            ],
+          },
+        },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+
+    if (!vault) {
+      return sendError(res, 404, 'TG_CORE_404', 'No se encontró ninguna bóveda con ese correo o usuario.');
+    }
+
+    return sendSuccess(res, toVaultDto(vault));
+  } catch (error) {
+    return sendError(res, 500, 'TG_CORE_500', getDatabaseErrorMessage(error));
+  }
+});
+
 vaultRouter.get('/:vaultId', async (req, res) => {
   const { vaultId } = req.params;
 
